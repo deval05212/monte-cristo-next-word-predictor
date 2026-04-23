@@ -1,0 +1,140 @@
+import os
+import pickle
+import numpy as np
+import tensorflow as tf
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from keras.models import Sequential, load_model
+from keras.layers import Embedding, LSTM, Dense
+
+class NextWordPredictor:
+    def __init__(self, data_path='cleaned_data.txt', model_path='next_word_model.keras', tokenizer_path='tokenizer.pkl'):
+        self.data_path = data_path
+        self.model_path = model_path
+        self.tokenizer_path = tokenizer_path
+        self.tokenizer = Tokenizer()
+        self.model = None
+        self.max_sequence_len = 0
+        self.vocab_size = 0
+
+    def load_data(self):
+        print(f"Loading data from {self.data_path}...")
+        with open(self.data_path, 'r', encoding='utf-8') as file:
+            text = file.read()
+        
+        # Split text into lines
+        lines = text.split('\n')
+        
+        print("Fitting tokenizer...")
+        self.tokenizer.fit_on_texts(lines)
+        self.vocab_size = len(self.tokenizer.word_index) + 1
+        print(f"Vocabulary size: {self.vocab_size}")
+
+        print("Generating input sequences...")
+        input_sequences = []
+        for line in lines:
+            token_list = self.tokenizer.texts_to_sequences([line])[0]
+            # Create n-gram sequences to predict the next word
+            for i in range(1, len(token_list)):
+                n_gram_sequence = token_list[:i+1]
+                input_sequences.append(n_gram_sequence)
+                
+        # To avoid massive padding that hurts memory and training time, we cap sequence length.
+        # E.g. we only need the last ~20 words to predict the next one.
+        max_actual_len = max([len(seq) for seq in input_sequences] if input_sequences else [0])
+        self.max_sequence_len = min(max_actual_len, 20)
+        
+        print(f"Max sequence length (capped for efficiency): {self.max_sequence_len}")
+        
+        print("Padding sequences...")
+        # pad_sequences by default truncates from the beginning ('pre'), keeping the most recent words.
+        input_sequences = pad_sequences(input_sequences, maxlen=self.max_sequence_len, padding='pre')
+        
+        # Split into predictors (X) and label (y)
+        X = input_sequences[:, :-1]
+        y = input_sequences[:, -1]
+        
+        return X, y
+
+    def build_model(self):
+        print("Building model architecture...")
+        self.model = Sequential()
+        self.model.add(Embedding(self.vocab_size, 100, input_length=self.max_sequence_len - 1))
+        self.model.add(LSTM(150))
+        # We use sparse_categorical_crossentropy to avoid one-hot encoding the huge vocabulary
+        self.model.add(Dense(self.vocab_size, activation='softmax'))
+        
+        self.model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+        self.model.summary()
+
+    def train(self, X, y, epochs=10, batch_size=128):
+        print("Starting training...")
+        self.model.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=1)
+        
+        # Save the trained model and tokenizer
+        self.model.save(self.model_path)
+        with open(self.tokenizer_path, 'wb') as handle:
+            pickle.dump({'tokenizer': self.tokenizer, 'max_sequence_len': self.max_sequence_len}, handle)
+        print(f"Model saved to {self.model_path}")
+        print(f"Tokenizer saved to {self.tokenizer_path}")
+
+    def load_existing_model(self):
+        print(f"Loading existing model from {self.model_path}...")
+        self.model = load_model(self.model_path)
+        with open(self.tokenizer_path, 'rb') as handle:
+            data = pickle.load(handle)
+            self.tokenizer = data['tokenizer']
+            self.max_sequence_len = data['max_sequence_len']
+        print("Model and tokenizer loaded successfully.")
+
+    def predict_next_word(self, text):
+        if not self.model or not self.tokenizer:
+            raise ValueError("Model or tokenizer not loaded.")
+            
+        # Convert input text to tokens
+        token_list = self.tokenizer.texts_to_sequences([text])[0]
+        # Pad to match model input shape
+        token_list = pad_sequences([token_list], maxlen=self.max_sequence_len-1, padding='pre')
+        
+        # Predict the probabilities for the next word
+        predicted_probs = self.model.predict(token_list, verbose=0)
+        predicted_class = np.argmax(predicted_probs, axis=-1)[0]
+        
+        # Find the word corresponding to the predicted class index
+        output_word = ""
+        for word, index in self.tokenizer.word_index.items():
+            if index == predicted_class:
+                output_word = word
+                break
+        return output_word
+
+if __name__ == "__main__":
+    predictor = NextWordPredictor()
+    
+    # Check if the model already exists
+    if os.path.exists(predictor.model_path) and os.path.exists(predictor.tokenizer_path):
+        predictor.load_existing_model()
+    else:
+        print("No saved model found. Preparing data for training...")
+        X, y = predictor.load_data()
+        
+        predictor.build_model()
+        # You can adjust epochs and batch_size based on your hardware capabilities
+        predictor.train(X, y, epochs=20, batch_size=256)
+        
+    print("\n" + "="*50)
+    print("Prediction Phase Ready")
+    print("="*50)
+    
+    # Interactive prediction mode
+    print("Interactive Prediction Mode (type 'exit' to quit)")
+    while True:
+        user_input = input("Enter a phrase: ")
+        if user_input.strip().lower() == 'exit':
+            print("Exiting...")
+            break
+            
+        if user_input.strip():
+            predicted_word = predictor.predict_next_word(user_input)
+            print(f"-> Next word prediction: {predicted_word}")
+            print(f"-> Complete phrase: {user_input} {predicted_word}\n")
