@@ -1,4 +1,5 @@
 import os
+import time
 import pickle
 import numpy as np
 import tensorflow as tf
@@ -105,8 +106,23 @@ class NextWordPredictor:
         for word, index in self.tokenizer.word_index.items():
             if index == predicted_class:
                 output_word = word
-                break
         return output_word
+
+    def predict_next_n_words(self, text, n=10):
+        if not self.model or not self.tokenizer:
+            raise ValueError("Model or tokenizer not loaded.")
+            
+        current_text = text
+        predicted_words = []
+        
+        for _ in range(n):
+            next_word = self.predict_next_word(current_text)
+            if not next_word:
+                break
+            predicted_words.append(next_word)
+            current_text += " " + next_word
+            
+        return predicted_words
 
 if __name__ == "__main__":
     predictor = NextWordPredictor()
@@ -122,9 +138,7 @@ if __name__ == "__main__":
         # You can adjust epochs and batch_size based on your hardware capabilities
         predictor.train(X, y, epochs=20, batch_size=256)
         
-    print("\n" + "="*50)
     print("Prediction Phase Ready")
-    print("="*50)
     
     # Interactive prediction mode
     print("Interactive Prediction Mode (type 'exit' to quit)")
@@ -135,6 +149,15 @@ if __name__ == "__main__":
             break
             
         if user_input.strip():
-            predicted_word = predictor.predict_next_word(user_input)
-            print(f"-> Next word prediction: {predicted_word}")
-            print(f"-> Complete phrase: {user_input} {predicted_word}\n")
+            print(f"-> Prediction: {user_input}", end="", flush=True)
+            
+            current_text = user_input
+            for _ in range(10):
+                next_word = predictor.predict_next_word(current_text)
+                if not next_word:
+                    break
+                
+                print(f" {next_word}", end="", flush=True)
+                current_text += " " + next_word
+                time.sleep(0.5)
+            print('\n')
