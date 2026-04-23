@@ -152,12 +152,12 @@ if __name__ == "__main__":
             print(f"-> Prediction: {user_input}", end="", flush=True)
             
             current_text = user_input
-            for _ in range(10):
+            for _ in range(50):
                 next_word = predictor.predict_next_word(current_text)
                 if not next_word:
                     break
                 
                 print(f" {next_word}", end="", flush=True)
                 current_text += " " + next_word
-                time.sleep(0.5)
+                time.sleep(0.125)
             print('\n')
