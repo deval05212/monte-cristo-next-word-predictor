@@ -25,14 +25,14 @@ def main():
             print(f"Prediction: {user_input}", end="", flush=True)
             
             current_text = user_input
-            for _ in range(50):
+            for _ in range(15):
                 next_word = predictor.predict_next_word(current_text)
                 if not next_word:
                     break
                 
                 print(f" {next_word}", end="", flush=True)
                 current_text += " " + next_word
-                time.sleep(0.01)
+                time.sleep(0.2)
             print('\n')
 
 if __name__ == "__main__":
