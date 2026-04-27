@@ -6,7 +6,8 @@ import tensorflow as tf
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
 from keras.models import Sequential, load_model
-from keras.layers import Embedding, LSTM, Dense
+from keras.layers import Embedding, LSTM, Dense, Dropout
+from keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
 class NextWordPredictor:
     def __init__(self, data_path='cleaned_data.txt', model_path='next_word_model.keras', tokenizer_path='tokenizer.pkl'):
@@ -60,17 +61,33 @@ class NextWordPredictor:
     def build_model(self):
         print("Building model architecture...")
         self.model = Sequential()
-        self.model.add(Embedding(self.vocab_size, 100, input_length=self.max_sequence_len - 1))
-        self.model.add(LSTM(150))
+        self.model.add(Embedding(self.vocab_size, 300, input_length=self.max_sequence_len - 1))
+        self.model.add(LSTM(512, return_sequences=True))
+        self.model.add(LSTM(256))
+        self.model.add(Dense(512, activation='relu'))
         # We use sparse_categorical_crossentropy to avoid one-hot encoding the huge vocabulary
         self.model.add(Dense(self.vocab_size, activation='softmax'))
         
-        self.model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+        # Using Adam with a slightly custom learning rate can sometimes yield better convergence
+        optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        self.model.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer, metrics=['accuracy'])
         self.model.summary()
 
     def train(self, X, y, epochs=10, batch_size=128):
         print("Starting training...")
-        self.model.fit(X, y, epochs=epochs, batch_size=batch_size, verbose=1)
+        
+        # Stop training if the accuracy stops improving for 15 epochs
+        early_stopping = EarlyStopping(monitor='accuracy', patience=15, restore_best_weights=True, verbose=1)
+        # Reduce learning rate when the accuracy plateaus to fine-tune weights
+        reduce_lr = ReduceLROnPlateau(monitor='accuracy', factor=0.5, patience=5, min_lr=0.00001, verbose=1)
+        
+        self.model.fit(
+            X, y, 
+            epochs=epochs, 
+            batch_size=batch_size, 
+            verbose=1,
+            callbacks=[early_stopping, reduce_lr]
+        )
         
         # Save the trained model and tokenizer
         self.model.save(self.model_path)
@@ -127,37 +144,13 @@ class NextWordPredictor:
 if __name__ == "__main__":
     predictor = NextWordPredictor()
     
-    # Check if the model already exists
-    if os.path.exists(predictor.model_path) and os.path.exists(predictor.tokenizer_path):
-        predictor.load_existing_model()
-    else:
-        print("No saved model found. Preparing data for training...")
-        X, y = predictor.load_data()
-        
-        predictor.build_model()
-        # You can adjust epochs and batch_size based on your hardware capabilities
-        predictor.train(X, y, epochs=20, batch_size=256)
-        
-    print("Prediction Phase Ready")
+    print("Preparing data for training...")
+    X, y = predictor.load_data()
     
-    # Interactive prediction mode
-    print("Interactive Prediction Mode (type 'exit' to quit)")
-    while True:
-        user_input = input("Enter a phrase: ")
-        if user_input.strip().lower() == 'exit':
-            print("Exiting...")
-            break
-            
-        if user_input.strip():
-            print(f"-> Prediction: {user_input}", end="", flush=True)
-            
-            current_text = user_input
-            for _ in range(50):
-                next_word = predictor.predict_next_word(current_text)
-                if not next_word:
-                    break
-                
-                print(f" {next_word}", end="", flush=True)
-                current_text += " " + next_word
-                time.sleep(0.125)
-            print('\n')
+    predictor.build_model()
+    # Decreasing batch size allows the model to learn more frequently per epoch.
+    # Increasing epochs is safe now because EarlyStopping will halt it automatically.
+    predictor.train(X, y, epochs=150, batch_size=64)
+        
+    print("Training/Loading Complete.")
+    print("To interactively predict words, please run: python predict.py")
